@@ -39,6 +39,7 @@
 
 #define PFH_BTLE (30006)
 #define BLUETOOTH_LE_LL_WITH_PHDR 256
+#define NORDIC_BLE_SNIFFER_META 157
 #define PPI 192
 
 // CACE PPI headers
@@ -75,6 +76,16 @@ typedef struct _pcap_bluetooth_le_ll_header {
     uint16_t flags;
     uint8_t le_packet[0];
 } __attribute__((packed)) pcap_bluetooth_le_ll_header;
+
+typedef struct _pcap_nordic_ble_sniffer_meta {
+    uint32_t board;
+    uint32_t uart_packets_count;
+    uint8_t flags;
+    uint8_t channel;
+    int8_t rssi;
+    uint16_t event_counter;
+    uint32_t delta_time;
+} __attribute__((packed)) pacp_nordic_ble_sniffer_meta_t;
 
 
 /* misc definitions */
@@ -501,6 +512,13 @@ void packet_handler_ppi(u_char *user, const struct pcap_pkthdr *h, const u_char 
     state->btle_handler(state, h, bytes, header_len, h->caplen);
 }
 
+void packet_handler_nordic(u_char *user, const struct pcap_pkthdr *h, const u_char *bytes) {
+    crackle_state_t *state;
+    state = (crackle_state_t *)user;
+    size_t header_len = sizeof(pacp_nordic_ble_sniffer_meta_t);
+    state->btle_handler(state, h, bytes, header_len, h->caplen);
+}
+
 /*
  * Do AES on the 16 byte block of data.
  */
@@ -788,7 +806,7 @@ void decrypt(connection_state_t *state);
  * connection_state_t data structure with decrypted packet data and metadata
  * about how many packets were decrypted.
  */
-void do_crack(crackle_state_t *state, int force_strategy) {
+void do_crack(crackle_state_t *state) {
     int i;
     connection_state_t *conn;
     int num_connections = state->current_conn + 1;
@@ -830,10 +848,6 @@ void do_crack(crackle_state_t *state, int force_strategy) {
         // FIXME - use strategy 1 when it's implemented
         if (strategy == 1)
             strategy = 2;
-
-        // Override if told so
-        if (force_strategy >= 0)
-            strategy = force_strategy;
 
         // we're definitely cracking
         if (strategy == 0 || strategy == 1) {
@@ -1204,13 +1218,12 @@ int main(int argc, char **argv) {
     int opt;
     int verbose = 0, do_tests = 0;
     int do_ltk_decrypt = 0;
-    int force_strategy = -1;
     char *pcap_file = NULL;
     char *pcap_file_out = NULL;
     char *ltk = NULL;
     uint8_t ltk_bytes[16];
 
-    while ((opt = getopt(argc, argv, "i:o:vts:hl:")) != -1) {
+    while ((opt = getopt(argc, argv, "i:o:vthl:")) != -1) {
         switch (opt) {
             case 'i':
                 pcap_file = strdup(optarg);
@@ -1226,12 +1239,6 @@ int main(int argc, char **argv) {
 
             case 't':
                 do_tests = 1;
-                break;
-
-            case 's':
-                force_strategy = atoi(optarg);
-                if ((force_strategy < 0) || (force_strategy > 2))
-                  printf("Invalid strategy value, won't force.\n");
                 break;
 
             case 'l':
@@ -1320,6 +1327,9 @@ int main(int argc, char **argv) {
         case PPI:
                 packet_handler = packet_handler_ppi;
                 break;
+        case NORDIC_BLE_SNIFFER_META:
+                packet_handler = packet_handler_nordic;
+                break;
         default:
                 printf("Frames inside PCAP file not supported ! dlt_name=%s\n", pcap_datalink_val_to_name(cap_dlt));
                 printf("Frames format supported:\n");
@@ -1335,7 +1345,7 @@ int main(int argc, char **argv) {
     if (do_ltk_decrypt) {
         ltk_decrypt(&state, ltk_bytes);
     } else {
-        do_crack(&state, force_strategy);
+        do_crack(&state);
     }
 
     printf("\n");
